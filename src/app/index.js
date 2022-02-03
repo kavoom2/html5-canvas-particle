@@ -1,100 +1,114 @@
-import GUI from "lil-gui";
-// * References and Useful examples
-// => https://www.youtube.com/watch?v=VNmTubIDZOY
-// => https://codepen.io/nicksheffield/pen/GgdNop
-
-// * 0. Debugger UI
-const gui = new GUI();
-
-const wave = {
-  y: window.innerHeight / 2,
-  length: 0.01,
-  amplitude: 100,
-  frequency: 0.01,
-};
-
-const strokeColor = {
-  h: 200,
-  s: 50,
-  l: 50,
-};
-
-const backgroundColor = {
-  r: 0,
-  g: 0,
-  b: 0,
-  a: 0.01,
-};
-
-const waveFolder = gui.addFolder("Wave");
-waveFolder.add(wave, "y", 0, window.innerHeight, 1);
-waveFolder.add(wave, "length", -0.01, 0.01, 0.001);
-waveFolder.add(wave, "amplitude", -300, 300, 1);
-waveFolder.add(wave, "frequency", -0.01, 1, 0.001);
-
-const colorFolder = gui.addFolder("Stroke");
-colorFolder.add(strokeColor, "h", 0, 255, 1);
-colorFolder.add(strokeColor, "s", 0, 100, 1);
-colorFolder.add(strokeColor, "l", 0, 100, 1);
-
-const backgroundFolder = gui.addFolder("Background");
-backgroundFolder.add(backgroundColor, "r", 0, 255, 1);
-backgroundFolder.add(backgroundColor, "g", 0, 255, 1);
-backgroundFolder.add(backgroundColor, "b", 0, 255, 1);
-backgroundFolder.add(backgroundColor, "a", 0, 1, 0.01);
-
-// * 1. Canvas Settings
-const canvas = document.querySelector("canvas");
+const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const particlesArray = [];
+let hue = 0;
 
-const canvasSizes = {
-  width: window.innerWidth,
-  height: window.innerHeight,
-};
+const drawCanvas = () => {};
 
-const handleResizeEvent = () => {
-  canvasSizes.width = window.innerWidth;
-  canvasSizes.height = window.innerHeight;
-
+const resizeCanvas = () => {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
 };
 
-handleResizeEvent();
-window.addEventListener("resize", handleResizeEvent);
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
 
-// * Set Objcet and App
-
-// * 3. Canvas
-let increment = wave.frequency;
-
-const animate = () => {
-  requestAnimationFrame(animate);
-  ctx.fillStyle = `rgba(${backgroundColor.r}, ${backgroundColor.g}, ${backgroundColor.b}, ${backgroundColor.a})`;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.beginPath();
-
-  ctx.moveTo(0, canvas.height / 2);
-
-  for (let i = 0; i < canvas.width; i++) {
-    ctx.lineTo(
-      i,
-      wave.y +
-        Math.sin(i * wave.length + increment) *
-          wave.amplitude *
-          Math.sin(increment)
-    );
-  }
-
-  ctx.strokeStyle = `hsl(${Math.abs(strokeColor.h * Math.sin(increment))}, ${
-    strokeColor.s
-  }%, ${strokeColor.l}%)`;
-  ctx.stroke();
-
-  ctx.closePath();
-
-  increment += wave.frequency;
+const mouse = {
+  x: null,
+  y: null,
 };
 
+canvas.addEventListener("click", (event) => {
+  mouse.x = event.x;
+  mouse.y = event.y;
+
+  // for (let i = 0; i < 10; i++) {
+  //   particlesArray.push(new Particle());
+  // }
+});
+
+canvas.addEventListener("mousemove", (event) => {
+  mouse.x = event.x;
+  mouse.y = event.y;
+
+  for (let i = 0; i < 2; i++) {
+    particlesArray.push(new Particle());
+  }
+});
+
+class Particle {
+  constructor(x = null, y = null) {
+    this.x = x !== null && typeof x === "number" ? x : mouse.x;
+    this.y = y !== null && typeof y === "number" ? y : mouse.y;
+    this.size = Math.random() * 10 + 1;
+    this.speedX = (Math.random() - 0.5) * 3;
+    this.speedY = (Math.random() - 0.5) * 3;
+    this.color = `hsl(${hue}, 100%, 50%)`;
+  }
+
+  update() {
+    this.x += this.speedX;
+    this.y += this.speedY;
+
+    if (this.size > 0.2) this.size -= 0.01;
+  }
+
+  draw() {
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+const init = () => {
+  for (let i = 0; i < 100; i++) {
+    particlesArray.push(
+      new Particle(canvas.width * Math.random(), canvas.height * Math.random())
+    );
+  }
+};
+
+const handleParticles = () => {
+  for (let i = 0; i < particlesArray.length; i++) {
+    particlesArray[i].update();
+    particlesArray[i].draw();
+
+    for (let j = i; j < particlesArray.length; j++) {
+      const dx = particlesArray[i].x - particlesArray[j].x;
+      const dy = particlesArray[i].y - particlesArray[j].y;
+
+      const distance = Math.sqrt(dx ** 2 + dy ** 2);
+
+      if (distance < 100) {
+        ctx.beginPath();
+        ctx.strokeStyle = particlesArray[i].color;
+        ctx.lineWidth = particlesArray[i].size / 10;
+        ctx.moveTo(particlesArray[i].x, particlesArray[i].y);
+        ctx.lineTo(particlesArray[j].x, particlesArray[j].y);
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+
+    if (particlesArray[i].size <= 0.3) {
+      particlesArray.splice(i, 1);
+      i--;
+    }
+  }
+};
+
+const animate = () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // ctx.fillStyle = " rgba(0, 0, 0, 0.02)";
+  // ctx.fillStyle = "black";
+  // ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  handleParticles();
+  hue += 5;
+
+  requestAnimationFrame(animate);
+};
+
+init();
 animate();
