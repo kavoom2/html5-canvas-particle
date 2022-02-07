@@ -1,114 +1,213 @@
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const particlesArray = [];
-let hue = 0;
+import GUI from "lil-gui";
+import * as THREE from "three";
+import Stats from "three/examples/jsm/libs/stats.module.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const drawCanvas = () => {};
+let canvas, stats, clock, gui, mixer, actions, activeAction, previousAction;
+let camera, scene, renderer, model, face;
 
-const resizeCanvas = () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-};
-
-resizeCanvas();
-window.addEventListener("resize", resizeCanvas);
-
-const mouse = {
-  x: null,
-  y: null,
-};
-
-canvas.addEventListener("click", (event) => {
-  mouse.x = event.x;
-  mouse.y = event.y;
-
-  // for (let i = 0; i < 10; i++) {
-  //   particlesArray.push(new Particle());
-  // }
-});
-
-canvas.addEventListener("mousemove", (event) => {
-  mouse.x = event.x;
-  mouse.y = event.y;
-
-  for (let i = 0; i < 2; i++) {
-    particlesArray.push(new Particle());
-  }
-});
-
-class Particle {
-  constructor(x = null, y = null) {
-    this.x = x !== null && typeof x === "number" ? x : mouse.x;
-    this.y = y !== null && typeof y === "number" ? y : mouse.y;
-    this.size = Math.random() * 10 + 1;
-    this.speedX = (Math.random() - 0.5) * 3;
-    this.speedY = (Math.random() - 0.5) * 3;
-    this.color = `hsl(${hue}, 100%, 50%)`;
-  }
-
-  update() {
-    this.x += this.speedX;
-    this.y += this.speedY;
-
-    if (this.size > 0.2) this.size -= 0.01;
-  }
-
-  draw() {
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-const init = () => {
-  for (let i = 0; i < 100; i++) {
-    particlesArray.push(
-      new Particle(canvas.width * Math.random(), canvas.height * Math.random())
-    );
-  }
-};
-
-const handleParticles = () => {
-  for (let i = 0; i < particlesArray.length; i++) {
-    particlesArray[i].update();
-    particlesArray[i].draw();
-
-    for (let j = i; j < particlesArray.length; j++) {
-      const dx = particlesArray[i].x - particlesArray[j].x;
-      const dy = particlesArray[i].y - particlesArray[j].y;
-
-      const distance = Math.sqrt(dx ** 2 + dy ** 2);
-
-      if (distance < 100) {
-        ctx.beginPath();
-        ctx.strokeStyle = particlesArray[i].color;
-        ctx.lineWidth = particlesArray[i].size / 10;
-        ctx.moveTo(particlesArray[i].x, particlesArray[i].y);
-        ctx.lineTo(particlesArray[j].x, particlesArray[j].y);
-        ctx.stroke();
-        ctx.closePath();
-      }
-    }
-
-    if (particlesArray[i].size <= 0.3) {
-      particlesArray.splice(i, 1);
-      i--;
-    }
-  }
-};
-
-const animate = () => {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // ctx.fillStyle = " rgba(0, 0, 0, 0.02)";
-  // ctx.fillStyle = "black";
-  // ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  handleParticles();
-  hue += 5;
-
-  requestAnimationFrame(animate);
-};
+const api = { state: "Walking" };
 
 init();
 animate();
+
+function init() {
+  // * 캔버스 El
+  canvas = document.querySelector("#canvas");
+
+  // * 카메라 + Scene
+  camera = new THREE.PerspectiveCamera(
+    45,
+    window.innerWidth / window.innerHeight,
+    0.25,
+    100
+  );
+  camera.position.set(-5, 3, 10);
+  camera.lookAt(new THREE.Vector3(0, 2, 0));
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xe0e0e0);
+  scene.fog = new THREE.Fog(0xe0e0e0, 20, 100);
+
+  // * THREE JS 타이머
+  clock = new THREE.Clock();
+
+  // * Lights
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444);
+  hemiLight.position.set(0, 20, 0);
+  scene.add(hemiLight);
+
+  const dirLight = new THREE.DirectionalLight(0xffffff);
+  dirLight.position.set(0, 20, 10);
+  scene.add(dirLight);
+
+  // * Ground
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(2000, 2000),
+    new THREE.MeshPhongMaterial({ color: 0x999999, depthWrite: false })
+  );
+  mesh.rotation.x = -Math.PI / 2;
+  scene.add(mesh);
+
+  const grid = new THREE.GridHelper(200, 40, 0x000000, 0x000000);
+  grid.material.opacity = 0.2;
+  grid.material.transparent = true;
+  scene.add(grid);
+
+  // * Models
+  const loader = new GLTFLoader();
+  loader.load(
+    "models/gltf/RobotExpressive/RobotExpressive.glb",
+    function (gltf) {
+      model = gltf.scene;
+      scene.add(model);
+
+      createGUI(model, gltf.animations);
+    },
+    undefined,
+    function (e) {
+      console.error(e);
+    }
+  );
+
+  // * Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+
+  window.addEventListener("resize", onWindowResize);
+
+  // stats
+  stats = new Stats();
+  document.body.appendChild(stats.dom);
+}
+
+function createGUI(model, animations) {
+  const states = [
+    "Idle",
+    "Walking",
+    "Running",
+    "Dance",
+    "Death",
+    "Sitting",
+    "Standing",
+  ];
+  const emotes = ["Jump", "Yes", "No", "Wave", "Punch", "ThumbsUp"];
+
+  gui = new GUI();
+
+  mixer = new THREE.AnimationMixer(model);
+
+  actions = {};
+
+  for (let i = 0; i < animations.length; i++) {
+    const clip = animations[i];
+    const action = mixer.clipAction(clip);
+    actions[clip.name] = action;
+
+    if (emotes.indexOf(clip.name) >= 0 || states.indexOf(clip.name) >= 4) {
+      action.clampWhenFinished = true;
+      action.loop = THREE.LoopOnce;
+    }
+  }
+
+  console.log("Actions", actions);
+
+  // * states
+
+  const statesFolder = gui.addFolder("States");
+
+  // * Animation - State
+  const clipCtrl = statesFolder.add(api, "state").options(states);
+
+  clipCtrl.onChange(function () {
+    fadeToAction(api.state, 0.5);
+  });
+
+  statesFolder.open();
+
+  // * emotes
+
+  const emoteFolder = gui.addFolder("Emotes");
+
+  // * Animation - Emotion
+  function createEmoteCallback(name) {
+    api[name] = function () {
+      fadeToAction(name, 0.2);
+
+      mixer.addEventListener("finished", restoreState);
+    };
+
+    emoteFolder.add(api, name);
+  }
+
+  function restoreState() {
+    mixer.removeEventListener("finished", restoreState);
+
+    fadeToAction(api.state, 0.2);
+  }
+
+  for (let i = 0; i < emotes.length; i++) {
+    createEmoteCallback(emotes[i]);
+  }
+
+  emoteFolder.open();
+
+  // expressions
+
+  face = model.getObjectByName("Head_4");
+
+  const expressions = Object.keys(face.morphTargetDictionary);
+  const expressionFolder = gui.addFolder("Expressions");
+
+  for (let i = 0; i < expressions.length; i++) {
+    expressionFolder
+      .add(face.morphTargetInfluences, i, 0, 1, 0.01)
+      .name(expressions[i]);
+  }
+
+  activeAction = actions["Walking"];
+  activeAction.play();
+
+  expressionFolder.open();
+}
+
+function fadeToAction(name, duration) {
+  previousAction = activeAction;
+  activeAction = actions[name];
+
+  if (previousAction !== activeAction) {
+    previousAction.fadeOut(duration);
+  }
+
+  console.log(previousAction, activeAction);
+
+  activeAction
+    .reset()
+    .setEffectiveTimeScale(1)
+    .setEffectiveWeight(1)
+    .fadeIn(duration)
+    .play();
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+//
+
+function animate() {
+  const dt = clock.getDelta();
+
+  if (mixer) mixer.update(dt);
+
+  requestAnimationFrame(animate);
+
+  renderer.render(scene, camera);
+
+  stats.update();
+}
