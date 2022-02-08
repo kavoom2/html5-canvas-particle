@@ -1,36 +1,40 @@
-import GUI from "lil-gui";
 import * as THREE from "three";
-import Stats from "three/examples/jsm/libs/stats.module.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 
-let canvas, stats, clock, gui, mixer, actions, activeAction, previousAction;
-let camera, scene, renderer, model, face;
+let canvas, camera, scene, renderer, clock;
+const mixers = [];
+const sizes = {
+  width: window.innerWidth,
+  height: window.innerHeight,
+};
 
-const api = { state: "Walking" };
+function onWindowResize() {
+  sizes.width = window.innerWidth;
+  sizes.height = window.innerHeight;
 
-init();
-animate();
+  camera.aspect = sizes.width / sizes.height;
+  camera.updateProjectionMatrix();
 
-function init() {
-  // * 캔버스 El
-  canvas = document.querySelector("#canvas");
+  renderer.setSize(sizes.width, sizes.height);
+}
 
-  // * 카메라 + Scene
-  camera = new THREE.PerspectiveCamera(
-    45,
-    window.innerWidth / window.innerHeight,
-    0.25,
-    100
-  );
-  camera.position.set(-5, 3, 10);
-  camera.lookAt(new THREE.Vector3(0, 2, 0));
+function initApp() {
+  // * Canvas
+  canvas = document.querySelector("canvas");
 
-  scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xe0e0e0);
-  scene.fog = new THREE.Fog(0xe0e0e0, 20, 100);
+  // * 카메라
+  camera = new THREE.PerspectiveCamera(45, sizes.width / sizes.height, 1, 1000);
+  camera.position.set(2, 3, -6);
+  camera.lookAt(0, 1, 0);
 
-  // * THREE JS 타이머
+  // * THREE JS Timer
   clock = new THREE.Clock();
+
+  // * Scene
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xa0a0a0);
+  scene.fog = new THREE.Fog(0xa0a0a0, 10, 50);
 
   // * Lights
   const hemiLight = new THREE.HemisphereLight(0xffffff, 0x444444);
@@ -38,176 +42,87 @@ function init() {
   scene.add(hemiLight);
 
   const dirLight = new THREE.DirectionalLight(0xffffff);
-  dirLight.position.set(0, 20, 10);
+  dirLight.position.set(-3, 10, -10);
+  dirLight.castShadow = true;
+  dirLight.shadow.camera.top = 4;
+  dirLight.shadow.camera.bottom = -4;
+  dirLight.shadow.camera.left = -4;
+  dirLight.shadow.camera.right = 4;
+  dirLight.shadow.camera.near = 0.1;
+  dirLight.shadow.camera.far = 40;
   scene.add(dirLight);
+  scene.add(new THREE.CameraHelper(dirLight.shadow.camera));
 
-  // * Ground
+  // * Ground Mesh
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(2000, 2000),
+    new THREE.PlaneGeometry(200, 200),
     new THREE.MeshPhongMaterial({ color: 0x999999, depthWrite: false })
   );
   mesh.rotation.x = -Math.PI / 2;
+  mesh.receiveShadow = true;
   scene.add(mesh);
-
-  const grid = new THREE.GridHelper(200, 40, 0x000000, 0x000000);
-  grid.material.opacity = 0.2;
-  grid.material.transparent = true;
-  scene.add(grid);
 
   // * Models
   const loader = new GLTFLoader();
   loader.load(
-    "models/gltf/RobotExpressive/RobotExpressive.glb",
-    function (gltf) {
-      model = gltf.scene;
-      scene.add(model);
+    "models/gltf/Soldier.glb",
+    // on Success
+    (gltf) => {
+      gltf.scene.traverse((object) => {
+        // console.log("Traverse Object", object);
+        if (object.isMesh) object.castShadow = true;
 
-      createGUI(model, gltf.animations);
-    },
-    undefined,
-    function (e) {
-      console.error(e);
+        const model1 = SkeletonUtils.clone(gltf.scene);
+        const model2 = SkeletonUtils.clone(gltf.scene);
+        const model3 = SkeletonUtils.clone(gltf.scene);
+
+        const mixer1 = new THREE.AnimationMixer(model1);
+        const mixer2 = new THREE.AnimationMixer(model2);
+        const mixer3 = new THREE.AnimationMixer(model3);
+
+        mixer1.clipAction(gltf.animations[0]).play(); // idle
+        mixer2.clipAction(gltf.animations[1]).play(); // run
+        mixer3.clipAction(gltf.animations[3]).play(); // walk
+
+        model1.position.x = -2;
+        model2.position.x = 0;
+        model3.position.x = 2;
+
+        scene.add(model1, model2, model3);
+        mixers.push(mixer1, mixer2, mixer3);
+
+        // animate();
+      });
     }
+    // onProgress
+    // (event) => console.log("Progress Event", event),
+    // onError
+    // (error) => console.error(error)
   );
 
   // * Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true, canvas });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputEncoding = THREE.sRGBEncoding;
-
-  window.addEventListener("resize", onWindowResize);
-
-  // stats
-  stats = new Stats();
-  document.body.appendChild(stats.dom);
-}
-
-function createGUI(model, animations) {
-  const states = [
-    "Idle",
-    "Walking",
-    "Running",
-    "Dance",
-    "Death",
-    "Sitting",
-    "Standing",
-  ];
-  const emotes = ["Jump", "Yes", "No", "Wave", "Punch", "ThumbsUp"];
-
-  gui = new GUI();
-
-  mixer = new THREE.AnimationMixer(model);
-
-  actions = {};
-
-  for (let i = 0; i < animations.length; i++) {
-    const clip = animations[i];
-    const action = mixer.clipAction(clip);
-    actions[clip.name] = action;
-
-    if (emotes.indexOf(clip.name) >= 0 || states.indexOf(clip.name) >= 4) {
-      action.clampWhenFinished = true;
-      action.loop = THREE.LoopOnce;
-    }
-  }
-
-  console.log("Actions", actions);
-
-  // * states
-
-  const statesFolder = gui.addFolder("States");
-
-  // * Animation - State
-  const clipCtrl = statesFolder.add(api, "state").options(states);
-
-  clipCtrl.onChange(function () {
-    fadeToAction(api.state, 0.5);
+  renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    canvas,
   });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(sizes.width, sizes.height);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true;
 
-  statesFolder.open();
-
-  // * emotes
-
-  const emoteFolder = gui.addFolder("Emotes");
-
-  // * Animation - Emotion
-  function createEmoteCallback(name) {
-    api[name] = function () {
-      fadeToAction(name, 0.2);
-
-      mixer.addEventListener("finished", restoreState);
-    };
-
-    emoteFolder.add(api, name);
-  }
-
-  function restoreState() {
-    mixer.removeEventListener("finished", restoreState);
-
-    fadeToAction(api.state, 0.2);
-  }
-
-  for (let i = 0; i < emotes.length; i++) {
-    createEmoteCallback(emotes[i]);
-  }
-
-  emoteFolder.open();
-
-  // expressions
-
-  face = model.getObjectByName("Head_4");
-
-  const expressions = Object.keys(face.morphTargetDictionary);
-  const expressionFolder = gui.addFolder("Expressions");
-
-  for (let i = 0; i < expressions.length; i++) {
-    expressionFolder
-      .add(face.morphTargetInfluences, i, 0, 1, 0.01)
-      .name(expressions[i]);
-  }
-
-  activeAction = actions["Walking"];
-  activeAction.play();
-
-  expressionFolder.open();
+  // * Event Listener
+  window.addEventListener("resize", onWindowResize);
 }
-
-function fadeToAction(name, duration) {
-  previousAction = activeAction;
-  activeAction = actions[name];
-
-  if (previousAction !== activeAction) {
-    previousAction.fadeOut(duration);
-  }
-
-  console.log(previousAction, activeAction);
-
-  activeAction
-    .reset()
-    .setEffectiveTimeScale(1)
-    .setEffectiveWeight(1)
-    .fadeIn(duration)
-    .play();
-}
-
-function onWindowResize() {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-
-  renderer.setSize(window.innerWidth, window.innerHeight);
-}
-
-//
 
 function animate() {
-  const dt = clock.getDelta();
-
-  if (mixer) mixer.update(dt);
-
   requestAnimationFrame(animate);
 
-  renderer.render(scene, camera);
+  const dt = clock.getDelta();
 
-  stats.update();
+  for (const mixer of mixers) mixer.update(dt);
+
+  renderer.render(scene, camera);
 }
+
+initApp();
+animate();
